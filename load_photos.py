@@ -2,11 +2,12 @@ import os
 import cv2
 import numpy as np
 import mediapipe as mp
+from features import extract_features
 
 # === Konfiguracja ===
 IMG_SIZE = 64
-DATASET_DIR = "asl_alphabet_train"
-SAVE_IMAGES = False        # Czy zapisywać X.npy
+DATASET_DIR = "ASL_Alphabet_Dataset/asl_alphabet_train"
+SAVE_IMAGES = True       # Czy zapisywać X.npy
 SAVE_LANDMARKS = True      # Czy zapisywać X_landmarks.npy
 SAVE_LABELS = True         # Czy zapisywać y.npy
 
@@ -23,35 +24,13 @@ hands = mp_hands.Hands(
 )
 
 
-def extract_features(landmarks_xyz):
-    landmarks = np.array(landmarks_xyz).reshape((21, 3))
-
-    # Środek dłoni – punkt 0
-    center = landmarks[0]
-
-    # Znormalizowane landmarki względem środka dłoni
-    norm_landmarks = landmarks - center
-
-    # Wybrane punkty palców (czubki): kciuk (4), wskazujący (8), środkowy (12), serdeczny (16), mały (20)
-    fingertip_idxs = [4, 8, 12, 16, 20]
-    dists = []
-    for i in range(len(fingertip_idxs)):
-        for j in range(i + 1, len(fingertip_idxs)):
-            d = np.linalg.norm(landmarks[fingertip_idxs[i]] - landmarks[fingertip_idxs[j]])
-            dists.append(d)
-
-    # Spłaszczone cechy
-    norm_flat = norm_landmarks.flatten()
-    features = np.concatenate([norm_flat, dists])
-    return features
-
 
 for label in sorted(os.listdir(DATASET_DIR)):
     path = os.path.join(DATASET_DIR, label)
     if not os.path.isdir(path):
         continue
 
-    for file in os.listdir(path)[:2000]:
+    for file in os.listdir(path)[:8000]:
         img_path = os.path.join(path, file)
         img = cv2.imread(img_path)
         if img is None:

@@ -1,45 +1,74 @@
+import os
+
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+
 import numpy as np
 import pickle
+import tensorflow as tf
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, Flatten, Dense, Concatenate
+from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, Flatten, Dense, Concatenate, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils import shuffle
+from tensorflow.keras import mixed_precision
 
-# === Parametry ===
+
+gpus = tf.config.list_physical_devices('GPU')
+if gpus:
+    try:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+        print("Dynamiczne zarządzanie pamięcią GPU włączone")
+    except RuntimeError as e:
+        print(e)
+
+
+mixed_precision.set_global_policy('mixed_float16')
+
 IMG_SIZE = 64
 
-# === Wczytaj dane ===
-X = np.load("X.npy")                    # obrazy 64x64x3
-X_landmarks = np.load("X_landmarks.npy")  # cechy (63 + 10 = 73)
-y = np.load("y.npy")                   # etykiety tekstowe
+
+X = np.load("X.npy")
+X_landmarks = np.load("X_landmarks.npy")
+y = np.load("y.npy")
 
 # === Kodyfikacja etykiet ===
 le = LabelEncoder()
 y_encoded = le.fit_transform(y)
 y_cat = to_categorical(y_encoded)
 
-# Mieszamy dane
+# Mieszanie danych
 X, X_landmarks, y_cat = shuffle(X, X_landmarks, y_cat, random_state=42)
 
 # === Model dwuwejściowy ===
-# Wejście obrazu
+# Gałąź obrazu
 image_input = Input(shape=(IMG_SIZE, IMG_SIZE, 3), name="image_input")
-x = Conv2D(32, (3, 3), activation='relu')(image_input)
-x = MaxPooling2D(2, 2)(x)
-x = Conv2D(64, (3, 3), activation='relu')(x)
-x = MaxPooling2D(2, 2)(x)
+
+x = Conv2D(64, (3, 3), activation='relu', padding='same')(image_input)
+x = MaxPooling2D(pool_size=(2, 2))(x)
+
+x = Conv2D(128, (3, 3), activation='relu', padding='same')(x)
+x = MaxPooling2D(pool_size=(2, 2))(x)
+
+x = Conv2D(256, (3, 3), activation='relu', padding='same')(x)
+x = MaxPooling2D(pool_size=(2, 2))(x)
+
 x = Flatten()(x)
+x = Dense(256, activation='relu')(x)
+x = Dropout(0.3)(x)
 
-# Wejście cech landmarków (73 cechy)
-landmark_input = Input(shape=(73,), name="landmark_input")
-y_land = Dense(64, activation='relu')(landmark_input)
+# Gałąź landmarków
+landmark_input = Input(shape=(X_landmarks.shape[1],), name="landmark_input")
+y_land = Dense(128, activation='relu')(landmark_input)
+y_land = Dropout(0.3)(y_land)
 
-# Połączenie obu gałęzi
+# Połączenie
 combined = Concatenate()([x, y_land])
-z = Dense(128, activation='relu')(combined)
-output = Dense(len(le.classes_), activation='softmax')(z)
+z = Dense(256, activation='relu')(combined)
+z = Dropout(0.3)(z)
+output = Dense(len(le.classes_), activation='softmax', dtype='float32')(z)
 
 # Kompilacja modelu
 model = Model(inputs=[image_input, landmark_input], outputs=output)

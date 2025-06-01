@@ -2,12 +2,16 @@ import cv2
 import numpy as np
 import mediapipe as mp
 from tensorflow.keras.models import load_model
+from features import extract_features
+from tensorflow.keras import mixed_precision
+
+mixed_precision.set_global_policy('mixed_float16')
 
 IMG_SIZE = 64
 ROI_SIZE = 200
 
 # === Załaduj model i klasy ===
-model = load_model("model.h5")
+model = load_model("model.h5", compile=False)
 classes = np.load("classes.npy")
 
 # === MediaPipe Hands ===
@@ -21,22 +25,6 @@ hands = mp_hands.Hands(static_image_mode=False,
 # === Kamera ===
 cap = cv2.VideoCapture(2)
 print("Naciśnij Q aby wyjść")
-
-def extract_features(landmarks_xyz):
-    landmarks = np.array(landmarks_xyz).reshape((21, 3))
-    center = landmarks[0]
-    norm_landmarks = landmarks - center
-
-    fingertip_idxs = [4, 8, 12, 16, 20]
-    dists = []
-    for i in range(len(fingertip_idxs)):
-        for j in range(i + 1, len(fingertip_idxs)):
-            d = np.linalg.norm(landmarks[fingertip_idxs[i]] - landmarks[fingertip_idxs[j]])
-            dists.append(d)
-
-    norm_flat = norm_landmarks.flatten()
-    features = np.concatenate([norm_flat, dists])
-    return features
 
 while True:
     ret, frame = cap.read()
