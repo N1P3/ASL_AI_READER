@@ -1,8 +1,4 @@
 import os
-
-
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
 import numpy as np
 import pickle
 import tensorflow as tf
@@ -12,9 +8,12 @@ from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, Flatten, Dense,
 from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils import shuffle
+
 from tensorflow.keras import mixed_precision
 
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
+# === Konfiguracja GPU ===
 gpus = tf.config.list_physical_devices('GPU')
 if gpus:
     try:
@@ -23,13 +22,14 @@ if gpus:
         print("Dynamiczne zarządzanie pamięcią GPU włączone")
     except RuntimeError as e:
         print(e)
-
+else:
+    print("Brak dostępnego GPU")
 
 mixed_precision.set_global_policy('mixed_float16')
 
 IMG_SIZE = 64
 
-
+# === Wczytywanie danych ===
 X = np.load("X.npy")
 X_landmarks = np.load("X_landmarks.npy")
 y = np.load("y.npy")
@@ -39,13 +39,13 @@ le = LabelEncoder()
 y_encoded = le.fit_transform(y)
 y_cat = to_categorical(y_encoded)
 
-# Mieszanie danych
+# === Mieszanie danych ===
 X, X_landmarks, y_cat = shuffle(X, X_landmarks, y_cat, random_state=42)
 
 # === Model dwuwejściowy ===
+
 # Gałąź obrazu
 image_input = Input(shape=(IMG_SIZE, IMG_SIZE, 3), name="image_input")
-
 x = Conv2D(64, (3, 3), activation='relu', padding='same')(image_input)
 x = MaxPooling2D(pool_size=(2, 2))(x)
 
@@ -68,9 +68,10 @@ y_land = Dropout(0.3)(y_land)
 combined = Concatenate()([x, y_land])
 z = Dense(256, activation='relu')(combined)
 z = Dropout(0.3)(z)
+
 output = Dense(len(le.classes_), activation='softmax', dtype='float32')(z)
 
-# Kompilacja modelu
+# === Kompilacja modelu ===
 model = Model(inputs=[image_input, landmark_input], outputs=output)
 model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
 
@@ -85,7 +86,7 @@ model.fit(
 )
 
 # === Zapis modelu i klas ===
-model.save("model.h5")
+model.save("model.h5")  # zamiast save_format="keras" (niedostępne w TF 2.10)
 np.save("classes.npy", le.classes_)
 with open("label_encoder.pkl", "wb") as f:
     pickle.dump(le, f)

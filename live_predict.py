@@ -3,24 +3,26 @@ import numpy as np
 import mediapipe as mp
 from tensorflow.keras.models import load_model
 from features import extract_features
-from tensorflow.keras import mixed_precision
 
+from tensorflow.keras import mixed_precision
 mixed_precision.set_global_policy('mixed_float16')
 
 IMG_SIZE = 64
 ROI_SIZE = 200
 
 # === Załaduj model i klasy ===
-model = load_model("model.h5", compile=False)
+model = load_model("model.h5")
 classes = np.load("classes.npy")
 
 # === MediaPipe Hands ===
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
-hands = mp_hands.Hands(static_image_mode=False,
-                       max_num_hands=1,
-                       min_detection_confidence=0.7,
-                       min_tracking_confidence=0.5)
+hands = mp_hands.Hands(
+    static_image_mode=False,
+    max_num_hands=1,
+    min_detection_confidence=0.7,
+    min_tracking_confidence=0.5
+)
 
 # === Kamera ===
 cap = cv2.VideoCapture(2)
@@ -40,7 +42,6 @@ while True:
 
     if results.multi_hand_landmarks:
         for hand_landmarks in results.multi_hand_landmarks:
-            # Rysuj landmarki
             mp_drawing.draw_landmarks(
                 frame, hand_landmarks,
                 mp_hands.HAND_CONNECTIONS,
@@ -48,7 +49,6 @@ while True:
                 mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2)
             )
 
-            # Środek dłoni
             x_coords = [lm.x for lm in hand_landmarks.landmark]
             y_coords = [lm.y for lm in hand_landmarks.landmark]
             cx = int(np.mean(x_coords) * w)
@@ -60,7 +60,6 @@ while True:
             x_max = min(cx + half_size, w)
             y_max = min(cy + half_size, h)
 
-            # Korekta krawędzi
             if x_max - x_min < ROI_SIZE:
                 if x_min == 0:
                     x_max = ROI_SIZE
@@ -78,26 +77,24 @@ while True:
 
             roi_resized = cv2.resize(roi, (IMG_SIZE, IMG_SIZE))
             roi_norm = roi_resized / 255.0
-            image_input = np.expand_dims(roi_norm, axis=0)
+            image_input = np.expand_dims(roi_norm, axis=0).astype('float16')
 
-            # === Landmarky z bieżącej dłoni ===
             landmark_list = []
             for lm in hand_landmarks.landmark:
                 landmark_list.extend([lm.x, lm.y, lm.z])
 
             if len(landmark_list) != 63:
-                continue  # pomiń jeśli niekompletne
+                continue
 
             features = extract_features(landmark_list)
             landmark_input = np.expand_dims(np.array(features, dtype="float32"), axis=0)
 
             # === Predykcja ===
             prediction = model.predict([image_input, landmark_input], verbose=0)[0]
-            top_indices = prediction.argsort()[-3:][::-1]  # top 3 indeksy
+            top_indices = prediction.argsort()[-3:][::-1]
 
             cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
 
-            # Wyświetl top 3 litery z prawdopodobieństwami
             for i, idx in enumerate(top_indices):
                 letter = classes[idx]
                 confidence = prediction[idx] * 100
