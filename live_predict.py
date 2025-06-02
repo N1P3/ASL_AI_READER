@@ -3,18 +3,16 @@ import numpy as np
 import mediapipe as mp
 from tensorflow.keras.models import load_model
 from features import extract_features
-
 from tensorflow.keras import mixed_precision
+
 mixed_precision.set_global_policy('mixed_float16')
 
 IMG_SIZE = 64
 ROI_SIZE = 200
 
-# === Załaduj model i klasy ===
 model = load_model("model.h5")
 classes = np.load("classes.npy")
 
-# === MediaPipe Hands ===
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 hands = mp_hands.Hands(
@@ -24,19 +22,22 @@ hands = mp_hands.Hands(
     min_tracking_confidence=0.5
 )
 
-# === Kamera ===
-cap = cv2.VideoCapture(2)
+cap = cv2.VideoCapture(0)
 print("Naciśnij Q aby wyjść")
+
+import os
+word_buffer = ""
+current_letter = ""
+output_path = "output.txt"
+open(output_path, "w").close()
 
 while True:
     ret, frame = cap.read()
     if not ret:
-        print("Nie udało się odczytać z kamery.")
         break
 
     frame = cv2.flip(frame, 1)
     h, w, _ = frame.shape
-
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = hands.process(rgb)
 
@@ -89,24 +90,42 @@ while True:
             features = extract_features(landmark_list)
             landmark_input = np.expand_dims(np.array(features, dtype="float32"), axis=0)
 
-            # === Predykcja ===
             prediction = model.predict([image_input, landmark_input], verbose=0)[0]
             top_indices = prediction.argsort()[-3:][::-1]
 
-            cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
+            predicted_letter = classes[top_indices[0]]
+            confidence = prediction[top_indices[0]] * 100
 
+            if confidence > 80:
+                current_letter = predicted_letter
+
+            cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
             for i, idx in enumerate(top_indices):
                 letter = classes[idx]
-                confidence = prediction[idx] * 100
+                conf = prediction[idx] * 100
                 y_text = y_min - 10 - i * 30
-                cv2.putText(frame, f'{letter} ({confidence:.1f}%)',
+                cv2.putText(frame, f'{letter} ({conf:.1f}%)',
                             (x_min, y_text),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
 
+    cv2.putText(frame, word_buffer, (10, 40),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3, cv2.LINE_AA)
+    cv2.putText(frame, f"Litera: {current_letter}", (10, 80),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 2, cv2.LINE_AA)
+
     cv2.imshow("Tłumacz Migowy", frame)
 
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    key = cv2.waitKey(1) & 0xFF
+    if key == 13:
+        if current_letter and current_letter != " ":
+            word_buffer += current_letter
+    elif key == ord('q'):
         break
+
+    if current_letter == "space" and word_buffer:
+        with open(output_path, "a", encoding="utf-8") as f:
+            f.write(word_buffer + " ")
+        word_buffer = ""
 
 cap.release()
 cv2.destroyAllWindows()
