@@ -4,6 +4,7 @@ import mediapipe as mp
 from tensorflow.keras.models import load_model
 from features import extract_features
 from tensorflow.keras import mixed_precision
+import time
 
 mixed_precision.set_global_policy('mixed_float16')
 
@@ -25,11 +26,13 @@ hands = mp_hands.Hands(
 cap = cv2.VideoCapture(0)
 print("Naciśnij Q aby wyjść")
 
-import os
 word_buffer = ""
 current_letter = ""
 output_path = "output.txt"
 open(output_path, "w").close()
+
+space_timer_start = None
+SPACE_HOLD_DURATION = 0.5
 
 while True:
     ret, frame = cap.read()
@@ -98,6 +101,8 @@ while True:
 
             if confidence > 80:
                 current_letter = predicted_letter
+            else:
+                current_letter = ""
 
             cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
             for i, idx in enumerate(top_indices):
@@ -108,6 +113,18 @@ while True:
                             (x_min, y_text),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
 
+    if current_letter == "space":
+        if space_timer_start is None:
+            space_timer_start = time.monotonic()
+        elif time.monotonic() - space_timer_start >= SPACE_HOLD_DURATION:
+            if word_buffer:
+                with open(output_path, "a", encoding="utf-8") as f:
+                    f.write(word_buffer + " ")
+                word_buffer = ""
+            space_timer_start = None  # reset timer after trigger
+    else:
+        space_timer_start = None
+
     cv2.putText(frame, word_buffer, (10, 40),
                 cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 3, cv2.LINE_AA)
     cv2.putText(frame, f"Litera: {current_letter}", (10, 80),
@@ -117,15 +134,10 @@ while True:
 
     key = cv2.waitKey(1) & 0xFF
     if key == 13:
-        if current_letter and current_letter != " ":
+        if current_letter and current_letter != "space":
             word_buffer += current_letter
     elif key == ord('q'):
         break
-
-    if current_letter == "space" and word_buffer:
-        with open(output_path, "a", encoding="utf-8") as f:
-            f.write(word_buffer + " ")
-        word_buffer = ""
 
 cap.release()
 cv2.destroyAllWindows()
