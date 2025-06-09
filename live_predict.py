@@ -3,7 +3,7 @@ import time
 import customtkinter as ctk
 import cv2
 import numpy as np
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw
 from tensorflow.keras import mixed_precision
 from tensorflow.keras.models import load_model
 
@@ -18,6 +18,7 @@ model = load_model("model.h5")
 classes = np.load("classes.npy")
 
 import mediapipe as mp
+
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 hands = mp_hands.Hands(
@@ -53,7 +54,8 @@ label_current.pack()
 label_word = ctk.CTkLabel(app, text="", font=("Arial", 24, "bold"))
 label_word.pack(pady=10)
 
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(2)
+
 
 class SnakeGame:
     def __init__(self, master, control_letter_callback):
@@ -71,9 +73,11 @@ class SnakeGame:
         self.snake_direction = (0, 1)
         self.food = self._generate_food()
 
+        self._load_textures()
+
         self.canvas = ctk.CTkCanvas(self.master, width=self.board_size * self.tile_size,
-                                     height=self.board_size * self.tile_size,
-                                     bg="black", highlightthickness=0)
+                                    height=self.board_size * self.tile_size,
+                                    bg="black", highlightthickness=0)
         self.canvas.pack(pady=10)
 
         self.score_label = ctk.CTkLabel(self.master, text=f"Punkty: {self.score}", font=("Arial", 24, "bold"))
@@ -84,6 +88,78 @@ class SnakeGame:
         self.countdown_val = 3
         self.start_countdown()
 
+    def _load_textures(self):
+        texture_paths = {
+            "head_up": "textures/head_up.png",
+            "head_down": "textures/head_down.png",
+            "head_left": "textures/head_left.png",
+            "head_right": "textures/head_right.png",
+            "body_base": "textures/body_vertical.png",
+            "tail_base": "textures/tail_up.png",
+            "food": "textures/food.png",
+        }
+
+        self.head_ctk_images = {}
+        self.body_ctk_images_oriented = {}
+        self.tail_ctk_images_oriented = {}
+        self.food_ctk_image = None
+
+        self.head_photo_images = {}
+        self.body_photo_images_oriented = {}
+        self.tail_photo_images_oriented = {}
+        self.food_photo_image = None
+
+        def load_image_pil(path, size):
+            try:
+                return Image.open(path).resize((size, size), Image.Resampling.LANCZOS)
+            except FileNotFoundError:
+                print(f"Error: Texture file not found at {path}. Using fallback color.")
+                return Image.new('RGBA', (size, size), (100, 100, 100, 255))
+            except Exception as e:
+                print(f"Error loading image {path}: {e}. Using fallback color.")
+                return Image.new('RGBA', (size, size), (100, 100, 100, 255))
+
+
+        pil_head_up = load_image_pil(texture_paths["head_up"], self.tile_size)
+        pil_head_down = load_image_pil(texture_paths["head_down"], self.tile_size)
+        pil_head_left = load_image_pil(texture_paths["head_left"], self.tile_size)
+        pil_head_right = load_image_pil(texture_paths["head_right"], self.tile_size)
+
+        self.head_ctk_images[(0, -1)] = ctk.CTkImage(light_image=pil_head_up, size=(self.tile_size, self.tile_size))
+        self.head_photo_images[(0, -1)] = ImageTk.PhotoImage(pil_head_up)
+
+        self.head_ctk_images[(0, 1)] = ctk.CTkImage(light_image=pil_head_down, size=(self.tile_size, self.tile_size))
+        self.head_photo_images[(0, 1)] = ImageTk.PhotoImage(pil_head_down)
+
+        self.head_ctk_images[(-1, 0)] = ctk.CTkImage(light_image=pil_head_left, size=(self.tile_size, self.tile_size))
+        self.head_photo_images[(-1, 0)] = ImageTk.PhotoImage(pil_head_left)
+
+        self.head_ctk_images[(1, 0)] = ctk.CTkImage(light_image=pil_head_right, size=(self.tile_size, self.tile_size))
+        self.head_photo_images[(1, 0)] = ImageTk.PhotoImage(pil_head_right)
+
+
+        base_body_pil = load_image_pil(texture_paths["body_base"], self.tile_size)
+        base_tail_pil = load_image_pil(texture_paths["tail_base"], self.tile_size)
+
+
+        directions = [(0, 1), (0, -1), (1, 0), (-1, 0)]
+        angles = [0, 180, -90, 90]
+
+        for direction, angle in zip(directions, angles):
+            rotated_body_pil = base_body_pil.rotate(angle)
+            self.body_ctk_images_oriented[direction] = ctk.CTkImage(light_image=rotated_body_pil,
+                                                                    size=(self.tile_size, self.tile_size))
+            self.body_photo_images_oriented[direction] = ImageTk.PhotoImage(rotated_body_pil)
+
+            rotated_tail_pil = base_tail_pil.rotate(angle)
+            self.tail_ctk_images_oriented[direction] = ctk.CTkImage(light_image=rotated_tail_pil,
+                                                                    size=(self.tile_size, self.tile_size))
+            self.tail_photo_images_oriented[direction] = ImageTk.PhotoImage(rotated_tail_pil)
+
+        # Load food texture
+        pil_food = load_image_pil(texture_paths["food"], self.tile_size)
+        self.food_ctk_image = ctk.CTkImage(light_image=pil_food, size=(self.tile_size, self.tile_size))
+        self.food_photo_image = ImageTk.PhotoImage(pil_food)
 
     def _generate_food(self):
         while True:
@@ -92,8 +168,23 @@ class SnakeGame:
             if (food_x, food_y) not in self.snake:
                 return (food_x, food_y)
 
+    def _get_segment_direction(self, current_pos, prev_pos):
+        dx = current_pos[0] - prev_pos[0]
+        dy = current_pos[1] - prev_pos[1]
+
+        if abs(dx) > self.board_size / 2:
+            dx = (dx + self.board_size) % self.board_size if dx < 0 else (dx - self.board_size) % self.board_size
+        if abs(dy) > self.board_size / 2:
+            dy = (dy + self.board_size) % self.board_size if dy < 0 else (dy - self.board_size) % self.board_size
+
+        dx = int(np.sign(dx)) if dx != 0 else 0
+        dy = int(np.sign(dy)) if dy != 0 else 0
+
+        return (dx, dy)
+
     def _draw_board(self):
         self.canvas.delete("all")
+
         for x in range(self.board_size):
             for y in range(self.board_size):
                 color = "gray10" if (x + y) % 2 == 0 else "gray15"
@@ -103,19 +194,76 @@ class SnakeGame:
                     fill=color, outline=""
                 )
 
-        self.canvas.create_oval(
-            self.food[0] * self.tile_size, self.food[1] * self.tile_size,
-            (self.food[0] + 1) * self.tile_size, (self.food[1] + 1) * self.tile_size,
-            fill="red", tags="food"
-        )
+        if self.food_photo_image:
+            self.canvas.create_image(
+                self.food[0] * self.tile_size + self.tile_size // 2,
+                self.food[1] * self.tile_size + self.tile_size // 2,
+                image=self.food_photo_image, tags="food"
+            )
+        else:
+            self.canvas.create_oval(
+                self.food[0] * self.tile_size, self.food[1] * self.tile_size,
+                (self.food[0] + 1) * self.tile_size, (self.food[1] + 1) * self.tile_size,
+                fill="red", tags="food"
+            )
 
         for i, segment in enumerate(self.snake):
-            color = "green" if i == 0 else "lime green"
-            self.canvas.create_rectangle(
-                segment[0] * self.tile_size, segment[1] * self.tile_size,
-                (segment[0] + 1) * self.tile_size, (segment[1] + 1) * self.tile_size,
-                fill=color, tags="snake"
-            )
+            x_pos = segment[0] * self.tile_size
+            y_pos = segment[1] * self.tile_size
+
+            if i == 0:
+                head_photo_image = self.head_photo_images.get(self.snake_direction)
+                if head_photo_image:
+                    self.canvas.create_image(
+                        x_pos + self.tile_size // 2,
+                        y_pos + self.tile_size // 2,
+                        image=head_photo_image, tags="snake_head"
+                    )
+                else:
+                    self.canvas.create_rectangle(
+                        x_pos, y_pos,
+                        x_pos + self.tile_size, y_pos + self.tile_size,
+                        fill="green", tags="snake_head"
+                    )
+            elif i == len(self.snake) - 1:
+                if len(self.snake) > 1:
+                    prev_segment = self.snake[i - 1]
+                    tail_direction = self._get_segment_direction(segment, prev_segment)
+                    tail_photo_image = self.tail_photo_images_oriented.get(tail_direction)
+                    if tail_photo_image:
+                        self.canvas.create_image(
+                            x_pos + self.tile_size // 2,
+                            y_pos + self.tile_size // 2,
+                            image=tail_photo_image, tags="snake_tail"
+                        )
+                    else:
+                        self.canvas.create_rectangle(
+                            x_pos, y_pos,
+                            x_pos + self.tile_size, y_pos + self.tile_size,
+                            fill="dark green", tags="snake_tail"
+                        )
+                else:
+                    self.canvas.create_rectangle(
+                        x_pos, y_pos,
+                        x_pos + self.tile_size, y_pos + self.tile_size,
+                        fill="dark green", tags="snake_tail"
+                    )
+            else:
+                prev_segment = self.snake[i - 1]
+                body_direction = self._get_segment_direction(segment, prev_segment)
+                body_photo_image = self.body_photo_images_oriented.get(body_direction)
+                if body_photo_image:
+                    self.canvas.create_image(
+                        x_pos + self.tile_size // 2,
+                        y_pos + self.tile_size // 2,
+                        image=body_photo_image, tags="snake_body"
+                    )
+                else:
+                    self.canvas.create_rectangle(
+                        x_pos, y_pos,
+                        x_pos + self.tile_size, y_pos + self.tile_size,
+                        fill="lime green", tags="snake_body"
+                    )
 
     def _move_snake(self):
         if self.game_over or not self.game_started:
@@ -160,7 +308,6 @@ class SnakeGame:
         elif letter == "O":
             self.on_closing()
 
-
     def game_loop(self):
         if self.game_over:
             self.display_game_over()
@@ -185,7 +332,7 @@ class SnakeGame:
                 text=str(self.countdown_val), fill="white", font=("Arial", 80, "bold"), tags="countdown"
             )
             self.countdown_val -= 1
-            self.master.after(1000, self.start_countdown)
+            self.countdown_id = self.master.after(1000, self.start_countdown)
         else:
             self.canvas.delete("countdown")
             self.game_started = True
@@ -208,12 +355,13 @@ class SnakeGame:
         if self.game_loop_id:
             self.master.after_cancel(self.game_loop_id)
         if hasattr(self, 'countdown_id') and self.countdown_id is not None:
-             self.master.after_cancel(self.countdown_id)
+            self.master.after_cancel(self.countdown_id)
 
         snake_game_running = False
         snake_game_window = None
         snake_game_controller = None
         self.master.destroy()
+
 
 def launch_snake_game():
     global snake_game_running, snake_game_window, snake_game_controller
@@ -232,9 +380,9 @@ def launch_snake_game():
     game_y = 50
     snake_game_window.geometry(f"+{game_x}+{game_y}")
 
-
     snake_game_controller = SnakeGame(snake_game_window, lambda: current_letter)
     snake_game_running = True
+
 
 def update_frame():
     global current_letter, word_buffer, space_start_time, snake_game_running
@@ -323,24 +471,29 @@ def update_frame():
     else:
         space_start_time = None
 
-    img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    img = Image.fromarray(img)
-    img = ImageTk.PhotoImage(image=img)
-    frame_label.configure(image=img)
-    frame_label.image = img
+    img_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+
+    ctk_img_for_label = ctk.CTkImage(light_image=img_pil, size=(frame.shape[1], frame.shape[0]))
+    frame_label.configure(image=ctk_img_for_label)
+    frame_label.image = ctk_img_for_label
 
     label_current.configure(text=f"Litera: {current_letter}")
     label_word.configure(text=word_buffer)
 
     app.after(10, update_frame)
 
+
 def key_event(event):
-    global word_buffer
+    global word_buffer, snake_game_running
     if event.keysym == "Return" and current_letter and current_letter != "space":
         word_buffer += current_letter
+    if event.keysym == "s" and not snake_game_running:
+        launch_snake_game()
+
 
 app.bind("<Key>", key_event)
 app.after(0, update_frame)
 app.mainloop()
+
 cap.release()
 cv2.destroyAllWindows()
